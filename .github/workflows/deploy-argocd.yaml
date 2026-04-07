@@ -1,0 +1,63 @@
+name: Deploy ArgoCD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify cluster access
+        run: kubectl cluster-info && kubectl get nodes
+
+      # Step 1: Apply namespace first
+      - name: Create namespace
+        run: kubectl apply -f base/namespace.yaml
+
+      # Step 2: Apply ArgoCD core install with server-side apply
+      # Server-side apply avoids annotation size issues and handles
+      # field ownership conflicts during upgrades gracefully
+      - name: Deploy ArgoCD core
+        run: kubectl apply -n argocd -f base/install.yaml --server-side --force-conflicts
+
+      # Step 3: Apply customizations (NodePort service, etc.)
+      - name: Apply customizations
+        run: kubectl apply -f base/argocd-server-nodeport.yaml
+
+      # Step 4: Wait for all ArgoCD components to be ready
+      - name: Wait for ArgoCD rollout
+        run: |
+          echo "Waiting for ArgoCD deployments..."
+          kubectl -n argocd rollout status deployment/argocd-server --timeout=180s
+          kubectl -n argocd rollout status deployment/argocd-repo-server --timeout=180s
+          kubectl -n argocd rollout status deployment/argocd-redis --timeout=180s
+          kubectl -n argocd rollout status deployment/argocd-dex-server --timeout=180s
+          kubectl -n argocd rollout status deployment/argocd-notifications-controller --timeout=180s
+          kubectl -n argocd rollout status deployment/argocd-applicationset-controller --timeout=180s
+          echo "All ArgoCD components are ready."
+
+      # Step 5: Re-apply ArgoCD Applications
+      # After ArgoCD restarts, existing Applications persist in etcd.
+      # But if apps were added/changed in Git, apply them here.
+      - name: Deploy ArgoCD Applications
+        run: kubectl apply -f apps/
+
+      # Step 6: Verify ArgoCD is healthy and apps are syncing
+      - name: Verify ArgoCD health
+        run: |
+          echo "=== ArgoCD Pods ==="
+          kubectl -n argocd get pods
+          echo ""
+          echo "=== ArgoCD Applications ==="
+          kubectl -n argocd get applications
+          echo ""
+          echo "=== ArgoCD Server accessible ==="
+          kubectl -n argocd get svc argocd-server-nodeport
