@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agentgateway-gateway
+  namespace: argocd
+spec:
+  destination:
+    namespace: agentgateway-system
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    repoURL: https://github.com/phuongpham247/Agentgateway.git
+    targetRevision: main
+    path: manifests
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
